@@ -1,0 +1,7 @@
+.message.assistant {
+  color: red;
+}
+
+.message.user {
+  color: blue;
+}
