@@ -1,0 +1,15 @@
+.message.assistant {
+  color: red;
+}
+
+.message.user {
+  color: blue;
+}
+
+.message.tool {
+  color: green;
+}
+
+#thinking-thing.active::before {
+  content: "I AM THINKING VERY HARD";
+}
