@@ -5,7 +5,14 @@ import {
   useRef, MutableRefObject, RefObject,
   useEffect,
 } from "react";
-import { type DocEntry, TOOLS, TOOL_DEFINITIONS, TOOL_CALL_WAIT_MS, setDocAuthToken, getDocAuthToken } from "./Tools";
+
+import {
+  type DocEntry,
+  TOOLS, TOOL_DEFINITIONS, TOOL_CALL_WAIT_MS,
+  setDocAuthToken, getDocAuthToken,
+  validateResponse,
+} from "./Tools";
+
 import "./App.css";
 
 type AppProps = {
@@ -15,7 +22,7 @@ type AppProps = {
 
 type HistoryMsg = {
   content: string | null;
-  role: "assistant" | "user" | "tool";
+  role: "assistant" | "user" | "tool" | "system";
   tool_call_id?: string;
   name?: string;
   tool_calls?: any[];
@@ -46,7 +53,6 @@ async function getFreeModels(apiKeyIn: string): Promise<string[]> {
 // sends the provided parameter information to OpenRouter
 // returns the JSON response from the robot on the other side
 async function sendMessageToBackend(
-  // userInputStrIn: string,
   apiKeyIn: string,
   modelNameIn: string,
   chatHistoryIn: HistoryMsg[]
@@ -85,53 +91,25 @@ async function sendMessageToBackend(
   }
 }
 
-// returns the model (<response-data-JSON-or-`null`>, <updated-curChatHistory>) if an error occurred
+// returns the (<model-response-data-JSON-or-`null`>, <updated-curChatHistory>, <valid-response-boolean>)
 async function sendMessage(
   curChatHistory: HistoryMsg[],
   setChatHistory: Dispatch<SetStateAction<HistoryMsg[]>>,
-  // userInputRef: MutableRefObject<HTMLInputElement | null>,
   apiKeyIn: string | undefined,
   modelNameIn: string | undefined,
-  // hasSentFirstMsg: MutableRefObject<boolean>,
-  // systemPromptIn: string | null,
-): Promise<[any | null, HistoryMsg[]]> {
-  if (// userInputRef.current === null
-      // || userInputRef.current.value.length === 0
-      // ||
-        apiKeyIn === undefined
+): Promise<[any | null, HistoryMsg[], boolean]> {
+  if (apiKeyIn === undefined
       || modelNameIn === undefined) {
-    return [null, curChatHistory];
+    return [null, curChatHistory, true];
   }
 
-  // const userInputStr: string = userInputRef.current.value;
-
-  // let newChatHistory: HistoryMsg[];
-
-  // if (hasSentFirstMsg.current) {
-  //   newChatHistory = [
-  //     ...curChatHistory,
-  //     { content: userInputStr, role: "user" },
-  //   ];
-  // }
-  // // send `systemPromptIn` if no first message has been sent
-  // else {
-  //   newChatHistory = [
-  //     { content: systemPromptIn as string, role: "user"},
-  //     { content: userInputStr, role: "user" },
-  //   ];
-  //   hasSentFirstMsg.current = true;
-  // }
-
-  // setChatHistory(newChatHistory);
-  // userInputRef.current.value = "";
-
-
-  const robotResponse = await sendMessageToBackend(/*userInputStr, */apiKeyIn, modelNameIn, curChatHistory);
+  const robotResponse = await sendMessageToBackend(apiKeyIn, modelNameIn, curChatHistory);
 
   if (robotResponse instanceof Error) {
     alert(robotResponse.message);
-    return [null, curChatHistory];
-  } else {
+    return [null, curChatHistory, true];
+  }
+  else {
     const robotMessage = robotResponse.choices?.[0]?.message;
     const robotHistoryMsg: HistoryMsg = {
       content: robotMessage?.content ?? null,
@@ -139,8 +117,27 @@ async function sendMessage(
       tool_calls: robotMessage?.tool_calls ?? undefined
     };
 
-    setChatHistory(oldChatHistory => [...oldChatHistory, robotHistoryMsg]);
-    return [robotResponse, [...curChatHistory, robotHistoryMsg]];
+    if (robotHistoryMsg.content !== null) {
+      const validateData = await validateResponse(robotHistoryMsg.content);
+      if (validateData[0]) {
+        setChatHistory(oldChatHistory => [...oldChatHistory, robotHistoryMsg]);
+        return [robotResponse, [...curChatHistory, robotHistoryMsg], true];
+      } else {
+        const errorMsg = validateData[1] + ", original response: " + (robotMessage?.content ?? "");
+        console.log(" >> " + errorMsg);
+        const validateResMsg: HistoryMsg = {
+          content: errorMsg,
+          role: "system"
+        };
+        setChatHistory(oldChatHistory => [...oldChatHistory, validateResMsg]);
+        return [robotResponse, [...curChatHistory, validateResMsg], false];
+      }
+    }
+    // no validate if its a tool call (probably)
+    else {
+      setChatHistory(oldChatHistory => [...oldChatHistory, robotHistoryMsg]);
+      return [robotResponse, [...curChatHistory, robotHistoryMsg], true];
+    }
   }
 }
 
@@ -149,7 +146,7 @@ async function runAgenticLoop(
   setChatHistory: Dispatch<SetStateAction<HistoryMsg[]>>,
   userInputRef: MutableRefObject<HTMLInputElement | null>,
   thinkingRef: MutableRefObject<HTMLDivElement | null>,
-  apiKeyIn: string | undefined,
+    apiKeyIn: string | undefined,
   modelNameIn: string | undefined,
   hasSentFirstMsg: MutableRefObject<boolean>,
   systemPromptIn: string | null,
@@ -174,7 +171,7 @@ async function runAgenticLoop(
     // send `systemPromptIn` if no first message has been sent
     else {
       curChatHistoryUpdated = [
-        { content: systemPromptIn as string, role: "user"},
+        { content: systemPromptIn as string, role: "system"},
         { content: userInputStr, role: "user" },
       ];
       hasSentFirstMsg.current = true;
@@ -185,7 +182,7 @@ async function runAgenticLoop(
   }
 
   while (runLoop) {
-    const msgRes = await sendMessage(curChatHistoryUpdated, setChatHistory, /*userInputRef, */apiKeyIn, modelNameIn/*, hasSentFirstMsg, systemPromptIn*/);
+    const msgRes = await sendMessage(curChatHistoryUpdated, setChatHistory, apiKeyIn, modelNameIn);
     const robotResponse = msgRes[0];
     if (robotResponse === null) {
       runLoop = false;
@@ -196,58 +193,62 @@ async function runAgenticLoop(
 
     const robotMessage = robotResponse.choices?.[0]?.message;
     const finishReason = robotResponse.choices?.[0]?.finish_reason ?? "INVALID";
-    if (finishReason !== "tool_calls" && !(robotMessage && robotMessage.tool_calls)) {
+    const hasToolCalls = finishReason === "tool_calls" || (robotMessage && robotMessage.tool_calls)
+    // stop agentic loop if last robotResponse wasn't a tool call
+    //                      and msgRes is valid
+    if (!hasToolCalls && msgRes[2]) {
       runLoop = false;
       continue;
     }
 
-    console.log(" >> AGENT IS RUNNING SOME TOOLS !!!!!");
+    console.log(" >> AGENT LOOP IS RUNNING !!!!!");
 
-    let localChatHistory = [...curChatHistoryUpdated];
+    if (hasToolCalls) {
+      let localChatHistory = [...curChatHistoryUpdated];
 
-    for (const curToolCall of robotMessage.tool_calls) {
-      const functionName = curToolCall.function.name;
-      const args = curToolCall.function.arguments;
+      for (const curToolCall of robotMessage.tool_calls) {
+        const functionName = curToolCall.function.name;
+        const args = curToolCall.function.arguments;
 
-      console.log(` >> TOOL: ${functionName}, ARGS: ${args}`);
+        console.log(` >> TOOL: ${functionName}, ARGS: ${args}`);
 
-      try {
-        const parsedArgs = JSON.parse(args);
+        try {
+          const parsedArgs = JSON.parse(args);
 
-        if (UI_TOOLS[functionName]) {
+          if (UI_TOOLS[functionName]) {
+            localChatHistory.push({
+              content: await UI_TOOLS[functionName](parsedArgs),
+              role: "tool",
+              tool_call_id: curToolCall.id,
+              name: functionName,
+            });
+          }
+          else if (TOOLS[functionName]) {
+            localChatHistory.push({
+              content: await TOOLS[functionName](parsedArgs),
+              role: "tool",
+              tool_call_id: curToolCall.id,
+              name: functionName,
+            });
+          }
+          else {
+            throw new Error(`${functionName} is not a valid tool`);
+          }
+        } catch (errorIn: any) {
+          alert(`Error calling tool: ${errorIn.message}`);
           localChatHistory.push({
-            content: await UI_TOOLS[functionName](parsedArgs),
+            content: JSON.stringify({ error: errorIn.message }),
             role: "tool",
             tool_call_id: curToolCall.id,
             name: functionName,
           });
         }
-        else if (TOOLS[functionName]) {
-          localChatHistory.push({
-            content: await TOOLS[functionName](parsedArgs),
-            role: "tool",
-            tool_call_id: curToolCall.id,
-            name: functionName,
-          });
-        }
-        else {
-          throw new Error(`${functionName} is not a valid tool`);
-        }
-      } catch (errorIn: any) {
-        alert(`Error calling tool: ${errorIn.message}`);
-        localChatHistory.push({
-          content: JSON.stringify({ error: errorIn.message }),
-          role: "tool",
-          tool_call_id: curToolCall.id,
-          name: functionName,
-        });
       }
+
+      curChatHistoryUpdated = localChatHistory;
+      setChatHistory(curChatHistoryUpdated);
     }
-
-    curChatHistoryUpdated = localChatHistory;
-    setChatHistory(curChatHistoryUpdated);
-
-    // wait 1 second between tool calls
+    // wait 1 second between agent loops
     await new Promise(resolve => setTimeout(resolve, TOOL_CALL_WAIT_MS));
   }
 
@@ -274,7 +275,7 @@ function textInputKeyDown(
 }
 
 function getChatHistoryMsgDiv(msgIn: HistoryMsg, indexIn: number): JSX.Element {
-  if (msgIn.content === null) {
+  if (msgIn.content === null || msgIn.role === "system") {
     return (
       <div key={indexIn} style={{ display: "none" }}></div>
     );
@@ -490,7 +491,7 @@ export default function ({ apiKey, systemPrompt }: AppProps) {
       </select>
 
       <div id="chat-history">
-        {chatHistory.slice(1).map((curMsg, i) => getChatHistoryMsgDiv(curMsg, i))}
+        {chatHistory.map((curMsg, i) => getChatHistoryMsgDiv(curMsg, i))}
       </div>
 
       <div id="thinking-thing" ref={thinkingRef}></div>

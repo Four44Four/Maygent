@@ -37,7 +37,7 @@ export const TOOLS: Record<string, (...args: any[]) => any> = {
   getDocHeaderContent: getDocHeaderContent,
   getFooBar: getFooBar,
   getBankStatements: getBankStatements,
-  validateResponse: validateResponse,
+  // validateResponse: validateResponse,
 };
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
@@ -155,23 +155,23 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       }
     }
   },
-  {
-    type: "function",
-    function: {
-      name: "validateResponse",
-      description: "Tells whether this response passes or not",
-      parameters: {
-        type: "object",
-        properties: {
-          responseIn: {
-            type: "string",
-            description: "Response to check whether it passes or not",
-          }
-        },
-        required: ["responseIn"],
-      }
-    }
-  },
+  // {
+  //   type: "function",
+  //   function: {
+  //     name: "validateResponse",
+  //     description: "Tells whether this response passes or not",
+  //     parameters: {
+  //       type: "object",
+  //       properties: {
+  //         responseIn: {
+  //           type: "string",
+  //           description: "Response to check whether it passes or not",
+  //         }
+  //       },
+  //       required: ["responseIn"],
+  //     }
+  //   }
+  // },
 ];
 
 // function docListToString(
@@ -280,12 +280,12 @@ async function getDocHeaderContent(
   return extractedText.join("");
 }
 
-// TODO: make a GET request to the `/foobar.txt`
+// make a GET request to the `/foobar.txt`
 async function getFooBar(): Promise<string> {
   return fetch("./foobar.txt").then(res => res.text());
 }
 
-// TODO: make an SQLite query to SQLite DB
+// ???????
 async function getBankStatements(
   { dateIn, rowsScanAhead, rowsScanBehind }: {
     dateIn: string; // ISO-8601 string
@@ -296,10 +296,25 @@ async function getBankStatements(
   return `you have ${(Math.random() * 1738).toFixed(2)} dollars`;
 }
 
-// TODO: if this response contains the letters from the file `/hmm.txt`, then return false
-//       else, return true
-async function validateResponse(
-  { responseIn }: { responseIn: string; }
-): Promise<"true" | "false"> {
-  return Math.random() < 0.5 ? "true" : "false";
+// if this response contains the letters from the file `/hmm.txt`, then return [false, <invalid-reason-string>]
+// else, return [true, ""]
+export async function validateResponse(responseIn: string): Promise<[boolean, string]> {
+  const lettersStr = await fetch("./hmm.txt").then(res => res.text());
+  const checkStrs = lettersStr.split(/\r?\n/)
+                              .filter(str => str !== "");
+  const strsFound: string[] = [];
+
+  const valid = !checkStrs.some(curCheckStr => {
+    const res = responseIn.includes(curCheckStr);
+    if (res) {
+      strsFound.push(curCheckStr);
+    }
+    return res;
+  });
+
+  if (valid) {
+    return [valid, ""];
+  } else {
+    return [valid, `Invalid response, it contains these strings: ${JSON.stringify(strsFound)}`];
+  }
 }
