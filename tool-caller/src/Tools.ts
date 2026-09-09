@@ -278,13 +278,6 @@ async function getDocHeaderContent(
   }
 
   return extractedText.join("");
-
-  // const thing: Record<string, string> = {
-  //                 "gay": "this is a very amazing thing that produces gumballs in huge quanitites",
-  //                 "bowser": "from the hit game amogus, where all things go, she is the best of all the amoguses, and amogused all over the world, until she was eaten by the imposter",
-  //                 "ummm": "confusion reigns supreme in this land, where all things are super duper confused and never reall make sense, oh well, say cheese and drink chocolate !!!",
-  //               };
-  // return thing[headerIn] ?? "INVALID HEADER";
 }
 
 // TODO: make a GET request to the `/foobar.txt`
