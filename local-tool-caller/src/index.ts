@@ -78,7 +78,7 @@ app.post("/api/append-chat", (reqIn: Request, resIn: Response) => {
 
   console.log(` >> Received user message data: ${JSON.stringify(dataIn)}`);
 
-  if (!dataIn.chatName || typeof dataIn.message !== "string") {
+  if (!dataIn.chatName || typeof dataIn.chatName !== "string") {
     return resIn.status(400).json({
       message: "Missing or malformed `chatName` property",
     });
