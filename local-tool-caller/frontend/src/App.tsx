@@ -130,12 +130,44 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
       return;
     }
 
-    const newAppendedMessages = await appendChatRes.json();
-    setMsgList(oldMsgList => [...oldMsgList, ...newAppendedMessages]);
-
     userInputRef.current.value = "";
 
-    // TODO: second, process `appendChatRes` as an SSE stream and push each resulting thing onto the display
+    const streamReader = appendChatRes.body!
+                           .pipeThrough(new TextDecoderStream())
+                           .getReader();
+    // since a complete `DisplayMsg` JSON chunk may not be transmitted in a single read
+    //   a buffer must be used to hold partially transmitted chunks
+    let resBuffer = "";
+
+    // stream processing loop to update `msgList` whenever the stream receives data
+    while (true) {
+      const { value, done } = await streamReader.read();
+      if (done) {
+        break;
+      }
+
+      resBuffer += value;
+
+      const resBufferLines = resBuffer.split("\n");
+      resBuffer = resBufferLines.pop() ?? "";
+
+      const curMsgList: DisplayMsg[] = [];
+
+      for (const curLine of resBufferLines) {
+        const trimmedCurLine = curLine.trim();
+        if (!trimmedCurLine) {
+          continue;
+        }
+
+        try {
+          curMsgList.push(JSON.parse(trimmedCurLine));
+        } catch (errorIn: any) {
+          alert(`Some stupid thing happened while processing received messages: ${errorIn}`);
+        }
+      }
+
+      setMsgList(oldMsgList => [...(oldMsgList ?? []), ...curMsgList]);
+    }
   };
 
   return (

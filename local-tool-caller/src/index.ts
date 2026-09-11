@@ -54,7 +54,7 @@ app.post("/api/create-chat", (reqIn: Request, resIn: Response) => {
   resIn.sendStatus(201);
 });
 
-app.post("/api/append-chat", (reqIn: Request, resIn: Response) => {
+app.post("/api/append-chat", async (reqIn: Request, resIn: Response) => {
   const dataIn = reqIn.body;
 
   console.log(` >> Received user message data: ${JSON.stringify(dataIn)}`);
@@ -77,41 +77,68 @@ app.post("/api/append-chat", (reqIn: Request, resIn: Response) => {
     });
   }
 
+  resIn.setHeader("Content-Type", "text/event-stream");
+  resIn.setHeader("Cache-Control", "no-cache");
+  resIn.setHeader("Connection", "keep-alive");
+  resIn.flushHeaders();
+
+  // use SSE to send a `DisplayMsg` in response every time the robot produces a message + initial user submitted message
+  const appendMsg = (msgIn: HistoryMsg) => {
+    const appendRes = DB.appendMessageToChat(dataIn.chatName, msgIn);
+    if (appendRes instanceof Error) {
+      throw appendRes;
+    }
+
+    // newline delimited JSON stream messages
+    resIn.write(JSON.stringify({
+      content: msgIn.content ?? "",
+      role: msgIn.role,
+      toolName: msgIn.name,
+    }) + "\n");
+  };
+
+  // TODO: make this start an LLM loop and stream each robot message to `resIn`
+
+  // handle early client drop
+  let cancelResponse = false;
+  resIn.on("close", () => {
+    console.log(` >> Client at chat \`${dataIn.chatName}\` disconnected`);
+    cancelResponse = true;
+  });
+
   try {
-    const resMessages: HistoryMsg[] = [];
-    const appendMsg = (msgIn: HistoryMsg) => {
-      resMessages.push(msgIn);
-      const appendRes = DB.appendMessageToChat(dataIn.chatName, msgIn);
-      if (appendRes instanceof Error) {
-        throw appendRes;
-      }
-    };
-
-    // TODO: make this use SEE and send several `"assistant"` messages back over a period of time
-
     appendMsg({
       content: dataIn.message,
       role: "user",
     });
 
-    appendMsg({
-      content: "Acknowledged.",
-      role: "assistant",
-    });
+    const j = (1 + Math.floor(Math.random() * 9));
+    for (let i = 0; i < j; i++) {
+      console.log(` >> okay ${i} ${j} ${cancelResponse}`);
+      if (cancelResponse) {
+        return;
+      }
 
-    // TODO: second, do LLM agentic loop and push messages back to client over SSE
-
-    // respond with the new message data to be displayed as an array of JS objs
-    resIn.status(201).json(resMessages.map((curMsg: HistoryMsg) => ({
-      content: curMsg.content ?? "",
-      role: curMsg.role,
-      toolName: curMsg.name,
-    })));
+      appendMsg({
+        content: `Acknowledged. ${i}`,
+        role: "assistant",
+      });
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
   }
   catch (errorIn: any) {
-    return resIn.status(500).json({
-      message: `Error occurred while appending a message: ${errorIn}`,
-    });
+    if (!cancelResponse) {
+      resIn.write(JSON.stringify({
+        content: `Error occurred while appending a message: ${errorIn}`,
+        role: "system",
+      }) + "\n");
+    }
+  }
+  finally {
+    if (!resIn.writableEnded) {
+      console.log(` >> Client at chat \`${dataIn.chatName}\` cleanly closed connection`);
+      resIn.end();
+    }
   }
 });
 
