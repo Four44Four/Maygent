@@ -2,6 +2,9 @@ import express, { Request, Response } from "express";
 import { getRelPath } from "./util";
 import * as DB from "./db";
 import { type HistoryMsg } from "./db";
+import * as AI from "./ai";
+
+// TODO: make the selected model be saved by adding a new column to the Chat table + type
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -71,6 +74,18 @@ app.post("/api/append-chat", async (reqIn: Request, resIn: Response) => {
     });
   }
 
+  if (!dataIn.modelSlug || typeof dataIn.modelSlug !== "string") {
+    return resIn.status(400).json({
+      message: "Missing or malformed `modelSlug` property",
+    });
+  }
+
+  if (!dataIn.apiKey || typeof dataIn.apiKey !== "string") {
+    return resIn.status(400).json({
+      message: "Missing or malformed `apiKey` property",
+    });
+  }
+
   if (!DB.doesChatExist(dataIn.chatName)) {
     return resIn.status(400).json({
       message: `Provided Chat doesn't exist: ${dataIn.chatName}`,
@@ -81,6 +96,10 @@ app.post("/api/append-chat", async (reqIn: Request, resIn: Response) => {
   resIn.setHeader("Cache-Control", "no-cache");
   resIn.setHeader("Connection", "keep-alive");
   resIn.flushHeaders();
+
+  const chatDataIn = DB.getChat(dataIn.chatName);
+  const currentDirectoryIn = chatDataIn?.currentDirectory ?? "./";
+  const currentMessageHistory: HistoryMsg[] = DB.getMessages(dataIn.chatName) ?? [];
 
   // use SSE to send a `DisplayMsg` in response every time the robot produces a message + initial user submitted message
   const appendMsg = (msgIn: HistoryMsg) => {
@@ -95,39 +114,49 @@ app.post("/api/append-chat", async (reqIn: Request, resIn: Response) => {
       role: msgIn.role,
       toolName: msgIn.name,
     }) + "\n");
+
+    currentMessageHistory.push(msgIn);
   };
 
-  // TODO: make this start an LLM loop and stream each robot message to `resIn`
-
   // handle early client drop
-  let cancelResponse = false;
+  const cancelResponseBoxed = [false];
   resIn.on("close", () => {
     console.log(` >> Client at chat \`${dataIn.chatName}\` disconnected`);
-    cancelResponse = true;
+    cancelResponseBoxed[0] = true;
   });
 
   try {
+    if (currentMessageHistory.length === 0) {
+      appendMsg({
+        content: chatDataIn?.systemPrompt ?? "",
+        role: "system",
+      });
+    }
+
     appendMsg({
       content: dataIn.message,
       role: "user",
     });
 
-    const j = (1 + Math.floor(Math.random() * 9));
-    for (let i = 0; i < j; i++) {
-      console.log(` >> okay ${i} ${j} ${cancelResponse}`);
-      if (cancelResponse) {
-        return;
-      }
+    // TODO: impl a lock system to prevent 2 connections from appending a message to the same chat while one is still being processed
+    //       maybe a map of (<chat-name>, <is-locked>) where the lock is released if the response is ended
+    //       if a POST request to /api/append-chat while the lock on this specific chatName is acquired:
+    //         abort the new request with an Error indicating that there's already an ongoing response for this chat and to refresh their page
+    const agenticLoopRes = await AI.agenticLoopRespond(
+      cancelResponseBoxed as [boolean],
+      dataIn.modelSlug,
+      dataIn.apiKey,
+      currentDirectoryIn,
+      currentMessageHistory,
+      appendMsg,
+    );
 
-      appendMsg({
-        content: `Acknowledged. ${i}`,
-        role: "assistant",
-      });
-      await new Promise(resolve => setTimeout(resolve, 1000));
+    if (agenticLoopRes instanceof Error) {
+      throw agenticLoopRes;
     }
   }
   catch (errorIn: any) {
-    if (!cancelResponse) {
+    if (!cancelResponseBoxed[0]) {
       resIn.write(JSON.stringify({
         content: `Error occurred while appending a message: ${errorIn}`,
         role: "system",
@@ -181,7 +210,7 @@ app.get("/api/get-chat-exists/:nameIn", (reqIn: Request, resIn: Response) => {
   resIn.json(DB.doesChatExist(nameIn));
 });
 
-app.get("/api/get-char-current-directory/:nameIn", (reqIn: Request, resIn: Response) => {
+app.get("/api/get-chat-current-directory/:nameIn", (reqIn: Request, resIn: Response) => {
   const nameIn = reqIn.params.nameIn as string;
   // can be `undefined` if `nameIn` is not a valid Chat name
   resIn.json(DB.getChat(nameIn)?.currentDirectory);

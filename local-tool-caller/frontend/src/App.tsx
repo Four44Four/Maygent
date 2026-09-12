@@ -1,5 +1,6 @@
 import { JSX, useState, useEffect, useRef } from "react";
 import "./Shimmer.css";
+import "./App.css";
 
 type AppProps = {
   chatNameIn: string;
@@ -12,6 +13,27 @@ type DisplayMsg = {
   toolName?: string;
 };
 
+
+async function getFreeModels(apiKeyIn: string): Promise<string[]> {
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/models", {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${apiKeyIn}`
+      },
+    });
+    if (!response.ok) {
+      return ["openrouter/free"];
+    }
+
+    return (await response.json()).data
+             .filter((curModel: any) => curModel.pricing?.prompt === "0" && curModel.pricing?.completion === "0")
+             .map((curModel: any) => curModel.id);
+  } catch (errorIn: any) {
+    console.error(`Failed to fetch free Openrouter models: ${errorIn}`);
+    return ["openrouter/free"];
+  }
+}
 
 function getDisplayMsgDiv(msgIn: DisplayMsg, indexIn: number): JSX.Element {
   if (msgIn.role === "system") {
@@ -38,9 +60,12 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
   const [systemPrompt, setSystemPrompt] = useState<string | null>(null);
   const [currentDirectoryStr, setCurrentDirectoryStr] = useState<string | null>(null);
   const [displaySystemPrompt, setDisplaySystemPrompt] = useState<boolean>(false);
+  const [modelList, setModelList] = useState<string[]>(["openrouter/free"]);
+  const [waitingForResponse, setWaitingForResponse] = useState<boolean>(false);
 
   const userInputRef = useRef<HTMLInputElement | null>(null);
   const currentDirectoryInputRef = useRef<HTMLInputElement | null>(null);
+  const modelSelectRef = useRef<HTMLSelectElement | null>(null);
 
   useEffect(() => {
     // initialize `systemPrompt`
@@ -72,7 +97,7 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
       });
 
     // also initialize `currentDirectoryStr`
-    fetch(`/api/get-char-current-directory/${chatNameIn}`)
+    fetch(`/api/get-chat-current-directory/${chatNameIn}`)
       .then((res: any) => {
         if (!res.ok) {
           const msg = `Error in response: ${res.status} :: ${res.statusText}`;
@@ -84,6 +109,11 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
       .then((currentDirectoryIn: string | null) => {
         setCurrentDirectoryStr(currentDirectoryIn);
       });
+
+    // retrieve free models
+    (async () => {
+      setModelList(await getFreeModels(apiKey));
+    })();
   }, []);
 
   const setCurrentDirectory = async () => {
@@ -109,10 +139,12 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
   };
 
   const startAgenticLoop = async () => {
-    if (userInputRef.current === null) {
-      alert("Your user input element doesn't exist ????");
+    if (userInputRef.current === null || modelSelectRef.current === null) {
+      alert("Your required elements don't exist ????");
       return;
     }
+
+    setWaitingForResponse(true);
 
     const appendChatRes = await fetch("/api/append-chat", {
       method: "POST",
@@ -122,6 +154,8 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
       body: JSON.stringify({
         chatName: chatNameIn,
         message: userInputRef.current.value,
+        modelSlug: modelSelectRef.current.value,
+        apiKey: apiKey,
       }),
     });
 
@@ -168,6 +202,8 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
 
       setMsgList(oldMsgList => [...(oldMsgList ?? []), ...curMsgList]);
     }
+
+    setWaitingForResponse(false);
   };
 
   return (
@@ -194,10 +230,24 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
 
           <br />
 
+          <select ref={modelSelectRef}>
+            {modelList.map((curModelSlug: string) => (
+              <option key={curModelSlug} value={curModelSlug}>
+                {curModelSlug === "openrouter/free" ? "Auto free routing" : curModelSlug}
+              </option>
+            ))}
+          </select>
+
+          <br />
+
           {msgList !== null && (
             <div>
               {msgList.map((curMsg: DisplayMsg, i: number) => getDisplayMsgDiv(curMsg, i))}
             </div>
+          )}
+
+          {waitingForResponse && (
+            <p>ROBOT IS THINKING VERY HARD</p>
           )}
 
           <input type="text" placeholder="What do u want..." ref={userInputRef} />

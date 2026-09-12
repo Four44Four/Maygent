@@ -1,0 +1,11 @@
+.message.assistant {
+  color: red;
+}
+
+.message.user {
+  color: blue;
+}
+
+.message.tool {
+  color: green;
+}

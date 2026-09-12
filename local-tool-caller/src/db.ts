@@ -47,7 +47,7 @@ const GET_CHAT_MSG_COUNT_STMT = sqlDB.prepare("SELECT COUNT(*) AS msgsCount FROM
 const APPEND_MSG_STMT         = sqlDB.prepare("INSERT INTO messages (chatId, position, content, role, toolCallId, toolCallName, toolCalls) VALUES ((SELECT id FROM chats WHERE name = ?), ?, ?, ?, ?, ?, ?)");
 const SET_CHAT_CUR_DIR        = sqlDB.prepare("UPDATE chats SET currentDirectory = ? WHERE name = ?");
 const GET_CHAT                = sqlDB.prepare("SELECT name, systemPrompt, currentDirectory FROM chats WHERE name = ?");
-const GET_CHAT_MSGS           = sqlDB.prepare("SELECT content, role, toolCallId, toolCallName, toolCalls FROM messages WHERE chatId = (SELECT id FROM chats WHERE name = ?)");
+const GET_CHAT_MSGS           = sqlDB.prepare("SELECT content, role, toolCallId, toolCallName, toolCalls FROM messages WHERE chatId = (SELECT id FROM chats WHERE name = ?) ORDER BY position ASC");
 
 export function getChatNames(): string[] {
   try {
