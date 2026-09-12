@@ -49,6 +49,7 @@ app.post("/api/create-chat", (reqIn: Request, resIn: Response) => {
     systemPrompt: chatData.systemPrompt,
     messages: [],
     currentDirectory: null,
+    selectedModel: "openrouter/free",
   });
 
   if (addRes instanceof Error) {
@@ -149,10 +150,6 @@ app.post("/api/append-chat", async (reqIn: Request, resIn: Response) => {
       role: "user",
     });
 
-    // TODO: impl a lock system to prevent 2 connections from appending a message to the same chat while one is still being processed
-    //       maybe a map of (<chat-name>, <is-locked>) where the lock is released if the response is ended
-    //       if a POST request to /api/append-chat while the lock on this specific chatName is acquired:
-    //         abort the new request with an Error indicating that there's already an ongoing response for this chat and to refresh their page
     const agenticLoopRes = await AI.agenticLoopRespond(
       cancelResponseBoxed as [boolean],
       dataIn.modelSlug,
@@ -193,7 +190,7 @@ app.post("/api/set-chat-current-directory/:nameIn", (reqIn: Request, resIn: Resp
   }
 
   const nameIn = reqIn.params.nameIn as string;
-  const currentDirectoryIn = decodeURIComponent(dataIn.currentDirectoryIn);
+  const currentDirectoryIn = dataIn.currentDirectoryIn;
 
   console.log(` >> Received current directory: ${currentDirectoryIn} for ${nameIn}`);
 
@@ -213,6 +210,36 @@ app.post("/api/set-chat-current-directory/:nameIn", (reqIn: Request, resIn: Resp
   resIn.status(201).json(currentDirectoryIn);
 });
 
+app.post("/api/set-chat-selected-model/:nameIn", (reqIn: Request, resIn: Response) => {
+  const dataIn = reqIn.body;
+
+  if (!dataIn.selectedModelIn || typeof dataIn.selectedModelIn !== "string") {
+    return resIn.status(400).json({
+      message: "Missing or malformed `selectedModelIn` property",
+    });
+  }
+
+  const nameIn = reqIn.params.nameIn as string;
+  const selectedModelIn = dataIn.selectedModelIn;
+
+  console.log(` >> Received selected model: ${selectedModelIn} for ${nameIn}`);
+
+  if (!DB.doesChatExist(nameIn)) {
+    return resIn.status(400).json({
+      message: `Provided Chat doesn't exist: ${nameIn}`,
+    });
+  }
+
+  const setSelectedModelRes = DB.setChatSelectedModel(nameIn, selectedModelIn);
+  if (setSelectedModelRes instanceof Error) {
+    return resIn.status(500).json({
+      message: `Error occurred while setting selected model: ${setSelectedModelRes}`,
+    });
+  }
+
+  resIn.status(201).json(selectedModelIn);
+});
+
 app.get("/api/get-chat-names", (reqIn: Request, resIn: Response) => {
   resIn.json(DB.getChatNames());
 });
@@ -222,17 +249,23 @@ app.get("/api/get-chat-exists/:nameIn", (reqIn: Request, resIn: Response) => {
   resIn.json(DB.doesChatExist(nameIn));
 });
 
-app.get("/api/get-chat-current-directory/:nameIn", (reqIn: Request, resIn: Response) => {
+app.get("/api/get-chat/:nameIn", (reqIn: Request, resIn: Response) => {
   const nameIn = reqIn.params.nameIn as string;
   // can be `undefined` if `nameIn` is not a valid Chat name
-  resIn.json(DB.getChat(nameIn)?.currentDirectory);
+  resIn.json(DB.getChat(nameIn));
 });
 
-app.get("/api/get-chat-system-prompt/:nameIn", (reqIn: Request, resIn: Response) => {
-  const nameIn = reqIn.params.nameIn as string;
-  // can be `undefined` if `nameIn` is not a valid Chat name
-  resIn.json(DB.getChat(nameIn)?.systemPrompt);
-});
+// app.get("/api/get-chat-current-directory/:nameIn", (reqIn: Request, resIn: Response) => {
+//   const nameIn = reqIn.params.nameIn as string;
+//   // can be `undefined` if `nameIn` is not a valid Chat name
+//   resIn.json(DB.getChat(nameIn)?.currentDirectory);
+// });
+
+// app.get("/api/get-chat-system-prompt/:nameIn", (reqIn: Request, resIn: Response) => {
+//   const nameIn = reqIn.params.nameIn as string;
+//   // can be `undefined` if `nameIn` is not a valid Chat name
+//   resIn.json(DB.getChat(nameIn)?.systemPrompt);
+// });
 
 app.get("/api/get-chat-messages/:nameIn", (reqIn: Request, resIn: Response) => {
   const nameIn = reqIn.params.nameIn as string;

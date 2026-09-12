@@ -1,4 +1,4 @@
-import { JSX, useState, useEffect, useRef } from "react";
+import { JSX, useState, useEffect, useRef, ChangeEvent } from "react";
 import "./Shimmer.css";
 import "./App.css";
 
@@ -68,20 +68,6 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
   const modelSelectRef = useRef<HTMLSelectElement | null>(null);
 
   useEffect(() => {
-    // initialize `systemPrompt`
-    fetch(`/api/get-chat-system-prompt/${chatNameIn}`)
-      .then((res: any) => {
-        if (!res.ok) {
-          const msg = `Error in response: ${res.status} :: ${res.statusText}`;
-          alert(msg);
-          throw new Error(msg);
-        }
-        return res.json();
-      })
-      .then((systemPromptIn: string | undefined) => {
-        setSystemPrompt(systemPromptIn ?? "");
-      });
-
     // initialize `msgList`
     fetch(`/api/get-chat-messages/${chatNameIn}`)
       .then((res: any) => {
@@ -96,23 +82,21 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
         setMsgList(msgsIn);
       });
 
-    // also initialize `currentDirectoryStr`
-    fetch(`/api/get-chat-current-directory/${chatNameIn}`)
-      .then((res: any) => {
-        if (!res.ok) {
-          const msg = `Error in response: ${res.status} :: ${res.statusText}`;
-          alert(msg);
-          throw new Error(msg);
-        }
-        return res.json();
-      })
-      .then((currentDirectoryIn: string | null) => {
-        setCurrentDirectoryStr(currentDirectoryIn);
-      });
-
-    // retrieve free models
     (async () => {
+      // retrieve free models
       setModelList(await getFreeModels(apiKey));
+
+      // initialize Chat details
+      const getChatRes = await fetch(`/api/get-chat/${chatNameIn}`);
+      if (getChatRes.ok) {
+        const chatIn = await getChatRes.json();
+        setSystemPrompt(chatIn.systemPrompt);
+        setCurrentDirectoryStr(chatIn.currentDirectory);
+        modelSelectRef.current.value = chatIn.selectedModel;
+      }
+      else {
+        alert(`Error in response: ${res.status} :: ${res.statusText}`);
+      }
     })();
   }, []);
 
@@ -124,7 +108,7 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          currentDirectoryIn: encodeURIComponent(currentDirectoryInputRef.current.value),
+          currentDirectoryIn: currentDirectoryInputRef.current.value,
         }),
       });
       if (!setCurrentDirectoryRes.ok) {
@@ -206,56 +190,71 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
     setWaitingForResponse(false);
   };
 
+  const updateSelectedModel = async (eventIn: ChangeEvent<HTMLSelectElement>) => {
+    const setSelectedModelRes = await fetch(`/api/set-chat-selected-model/${chatNameIn}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        selectedModelIn: modelSelectRef.current.value,
+      }),
+    });
+    if (!setSelectedModelRes.ok) {
+      alert(`Error occurred while setting selected model to ${modelSelectRef.current.value}: ${setSelectedModelRes.status} :: ${setSelectedModelRes.statusText}`);
+      return;
+    }
+  };
+
   return (
     <div>
       {(msgList === null || systemPrompt === null) && (
         <div className="shimmer" style={{ height: "50vh", width: "100vw" }}></div>
       )}
 
-      {(msgList !== null && systemPrompt !== null) && (
-        <div>
-          <h3>Current directory:</h3>
-          <p>{currentDirectoryStr}</p>
-          <input type="text" placeholder="Enter your new current directory..." ref={currentDirectoryInputRef}/>
-          <button onClick={setCurrentDirectory}>
-            Set current directory
-          </button>
+      <div style={{ display: (msgList === null || systemPrompt === null) ? "none" : "block" }}>
+        <h3>Current directory:</h3>
+        <p>{currentDirectoryStr}</p>
+        <input type="text" placeholder="Enter your new current directory..." ref={currentDirectoryInputRef}/>
+        <button onClick={setCurrentDirectory}>
+          Set current directory
+        </button>
 
-          <br />
+        <br />
 
-          <button onClick={() => setDisplaySystemPrompt(oldVal => !oldVal)}>
-            Toggle display system prompt
-          </button>
-          {displaySystemPrompt && (<div>{systemPrompt}</div>)}
+        <button onClick={() => setDisplaySystemPrompt(oldVal => !oldVal)}>
+          Toggle display system prompt
+        </button>
+        {displaySystemPrompt && (<div>{systemPrompt}</div>)}
 
-          <br />
+        <br />
 
-          <select ref={modelSelectRef}>
-            {modelList.map((curModelSlug: string) => (
-              <option key={curModelSlug} value={curModelSlug}>
-                {curModelSlug === "openrouter/free" ? "Auto free routing" : curModelSlug}
-              </option>
-            ))}
-          </select>
+        <select ref={modelSelectRef}
+                onChange={updateSelectedModel}>
+          {modelList.map((curModelSlug: string) => (
+            <option key={curModelSlug} value={curModelSlug}>
+              {curModelSlug === "openrouter/free" ? "Auto free routing" : curModelSlug}
+            </option>
+          ))}
+        </select>
 
-          <br />
+        <br />
 
-          {msgList !== null && (
-            <div>
-              {msgList.map((curMsg: DisplayMsg, i: number) => getDisplayMsgDiv(curMsg, i))}
-            </div>
-          )}
+        {msgList !== null && (
+          <div>
+            {msgList.map((curMsg: DisplayMsg, i: number) => getDisplayMsgDiv(curMsg, i))}
+          </div>
+        )}
 
-          {waitingForResponse && (
-            <p>ROBOT IS THINKING VERY HARD</p>
-          )}
+        {waitingForResponse && (
+          <p>ROBOT IS THINKING VERY HARD</p>
+        )}
 
-          <input type="text" placeholder="What do u want..." ref={userInputRef} />
-          <button onClick={startAgenticLoop}>
-            Send
-          </button>
-        </div>
-      )}
+        <input type="text" placeholder="What do u want..." ref={userInputRef} />
+        <button onClick={startAgenticLoop}>
+          Send
+        </button>
+      </div>
     </div>
   );
 }
