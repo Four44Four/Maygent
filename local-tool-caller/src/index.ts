@@ -12,6 +12,9 @@ const PORT = process.env.PORT || 3000;
 const FRONTEND_ROOT_PATH = "../dist/public";
 const FRONTEND_ENTRY_FILE = "index.html";
 
+// set of chat names that are currently active in an agentic loop and cannot be appended to
+const activeChatNames = new Set<string>();
+
 app.use(express.json());
 app.use(express.static(getRelPath(FRONTEND_ROOT_PATH)));
 
@@ -92,6 +95,14 @@ app.post("/api/append-chat", async (reqIn: Request, resIn: Response) => {
     });
   }
 
+  if (activeChatNames.has(dataIn.chatName)) {
+    return resIn.status(400).json({
+      message: `Chat is currently active and locked: ${dataIn.chatName}`,
+    });
+  }
+
+  activeChatNames.add(dataIn.chatName);
+
   resIn.setHeader("Content-Type", "text/event-stream");
   resIn.setHeader("Cache-Control", "no-cache");
   resIn.setHeader("Connection", "keep-alive");
@@ -168,6 +179,7 @@ app.post("/api/append-chat", async (reqIn: Request, resIn: Response) => {
       console.log(` >> Client at chat \`${dataIn.chatName}\` cleanly closed connection`);
       resIn.end();
     }
+    activeChatNames.delete(dataIn.chatName);
   }
 });
 
