@@ -1,4 +1,4 @@
-import { JSX, useState, useEffect, useRef, ChangeEvent } from "react";
+import { JSX, useState, useEffect, useRef, RefObject, ChangeEvent } from "react";
 import "./Shimmer.css";
 import "./App.css";
 
@@ -14,7 +14,7 @@ type DisplayMsg = {
 };
 
 
-async function getFreeModels(apiKeyIn: string): Promise<string[]> {
+async function getFreeModels(apiKeyIn: string, withVision: boolean): Promise<string[]> {
   try {
     const response = await fetch("https://openrouter.ai/api/v1/models", {
       method: "GET",
@@ -27,7 +27,9 @@ async function getFreeModels(apiKeyIn: string): Promise<string[]> {
     }
 
     return (await response.json()).data
-             .filter((curModel: any) => curModel.pricing?.prompt === "0" && curModel.pricing?.completion === "0")
+             .filter((curModel: any) => curModel.pricing?.prompt === "0"
+                                         && curModel.pricing?.completion === "0"
+                                         && (!withVision || curModel.architecture?.input_modalities?.includes("image")))
              .map((curModel: any) => curModel.id);
   } catch (errorIn: any) {
     console.error(`Failed to fetch free Openrouter models: ${errorIn}`);
@@ -60,12 +62,16 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
   const [systemPrompt, setSystemPrompt] = useState<string | null>(null);
   const [currentDirectoryStr, setCurrentDirectoryStr] = useState<string | null>(null);
   const [displaySystemPrompt, setDisplaySystemPrompt] = useState<boolean>(false);
-  const [modelList, setModelList] = useState<string[]>(["openrouter/free"]);
+  const [textModelList, setTextModelList] = useState<string[]>(["openrouter/free"]);
+  const [imageModelList, setImageModelList] = useState<string[]>(["openrouter/free"]);
   const [waitingForResponse, setWaitingForResponse] = useState<boolean>(false);
+  const [imagePickersCount, setImagePickersCount] = useState<number>(0);
 
   const userInputRef = useRef<HTMLInputElement | null>(null);
   const currentDirectoryInputRef = useRef<HTMLInputElement | null>(null);
-  const modelSelectRef = useRef<HTMLSelectElement | null>(null);
+  const textModelSelectRef = useRef<HTMLSelectElement | null>(null);
+  const imageModelSelectRef = useRef<HTMLSelectElement | null>(null);
+  const imagePickerRefs = useRef<HTMLInputElement[]>([]);
 
   useEffect(() => {
     // initialize `msgList`
@@ -84,7 +90,8 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
 
     (async () => {
       // retrieve free models
-      setModelList(await getFreeModels(apiKey));
+      setTextModelList(await getFreeModels(apiKey, false));
+      setImageModelList(await getFreeModels(apiKey, true));
 
       // initialize Chat details
       const getChatRes = await fetch(`/api/get-chat/${chatNameIn}`);
@@ -92,7 +99,8 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
         const chatIn = await getChatRes.json();
         setSystemPrompt(chatIn.systemPrompt);
         setCurrentDirectoryStr(chatIn.currentDirectory);
-        modelSelectRef.current.value = chatIn.selectedModel;
+        textModelSelectRef.current.value = chatIn.selectedTextModel;
+        imageModelSelectRef.current.value = chatIn.selectedImageModel;
       }
       else {
         alert(`Error in response: ${res.status} :: ${res.statusText}`);
@@ -123,7 +131,7 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
   };
 
   const startAgenticLoop = async () => {
-    if (userInputRef.current === null || modelSelectRef.current === null) {
+    if (userInputRef.current === null || textModelSelectRef.current === null || imageModelSelectRef.current === null) {
       alert("Your required elements don't exist ????");
       return;
     }
@@ -138,7 +146,24 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
       body: JSON.stringify({
         chatName: chatNameIn,
         message: userInputRef.current.value,
-        modelSlug: modelSelectRef.current.value,
+        images: (await Promise.all(imagePickerRefs.current
+          .filter((curImagePickerElem: HTMLInputElement) => (
+            curImagePickerElem?.files[0]
+          ))
+          .map((curImagePickerElem: HTMLInputElement) => {
+            const curFile = curImagePickerElem.files?.[0];
+            if (curFile) {
+              return new Promise<string>((resolve: any, reject: any) => {
+                const fileReader = new FileReader();
+                fileReader.onload = () => resolve(fileReader.result as string);
+                fileReader.onerror = () => reject("");
+                fileReader.readAsDataURL(curFile);
+              });
+            }
+          })))
+          .filter((curBase64: string) => curBase64.length > 0),
+        imageModelSlug: imageModelSelectRef.current.value,
+        textModelSlug: textModelSelectRef.current.value,
         apiKey: apiKey,
       }),
     });
@@ -149,6 +174,8 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
     }
 
     userInputRef.current.value = "";
+    setImagePickersCount(0);
+    imagePickerRefs.current = [];
 
     const streamReader = appendChatRes.body!
                            .pipeThrough(new TextDecoderStream())
@@ -190,20 +217,40 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
     setWaitingForResponse(false);
   };
 
-  const updateSelectedModel = async (eventIn: ChangeEvent<HTMLSelectElement>) => {
-    const setSelectedModelRes = await fetch(`/api/set-chat-selected-model/${chatNameIn}`, {
+  const updateSelectedTextModel = async (eventIn: ChangeEvent<HTMLSelectElement>) => {
+    const setSelectedModelRes = await fetch(`/api/set-chat-selected-text-model/${chatNameIn}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        selectedModelIn: modelSelectRef.current.value,
+        selectedModelIn: textModelSelectRef.current.value,
       }),
     });
     if (!setSelectedModelRes.ok) {
-      alert(`Error occurred while setting selected model to ${modelSelectRef.current.value}: ${setSelectedModelRes.status} :: ${setSelectedModelRes.statusText}`);
+      alert(`Error occurred while setting selected text model to ${textModelSelectRef.current.value}: ${setSelectedModelRes.status} :: ${setSelectedModelRes.statusText}`);
       return;
     }
+  };
+
+  const updateSelectedImageModel = async (eventIn: ChangeEvent<HTMLSelectElement>) => {
+    const setSelectedModelRes = await fetch(`/api/set-chat-selected-image-model/${chatNameIn}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        selectedModelIn: imageModelSelectRef.current.value,
+      }),
+    });
+    if (!setSelectedModelRes.ok) {
+      alert(`Error occurred while setting selected image model to ${imageModelSelectRef.current.value}: ${setSelectedModelRes.status} :: ${setSelectedModelRes.statusText}`);
+      return;
+    }
+  };
+
+  const addImagePicker = () => {
+    setImagePickersCount(oldVal => oldVal + 1);
   };
 
   return (
@@ -229,9 +276,20 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
 
         <br />
 
-        <select ref={modelSelectRef}
-                onChange={updateSelectedModel}>
-          {modelList.map((curModelSlug: string) => (
+        <p>Text model</p>
+        <select ref={textModelSelectRef}
+                onChange={updateSelectedTextModel}>
+          {textModelList.map((curModelSlug: string) => (
+            <option key={curModelSlug} value={curModelSlug}>
+              {curModelSlug === "openrouter/free" ? "Auto free routing" : curModelSlug}
+            </option>
+          ))}
+        </select>
+
+        <p>Image model</p>
+        <select ref={imageModelSelectRef}
+                onChange={updateSelectedImageModel}>
+          {imageModelList.map((curModelSlug: string) => (
             <option key={curModelSlug} value={curModelSlug}>
               {curModelSlug === "openrouter/free" ? "Auto free routing" : curModelSlug}
             </option>
@@ -254,6 +312,19 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
         <button onClick={startAgenticLoop}>
           Send
         </button>
+
+        <button onClick={addImagePicker}>
+          Add image
+        </button>
+        {Array.from({ length: imagePickersCount }, (_: any, i: number) => (
+          <div>
+            <input type="file"
+                   accept="image/*"
+                   key={i}
+                   ref={(elem: HTMLInputElement) => { imagePickerRefs.current[i] = elem; }}/>
+            <br />
+          </div>
+        ))}
       </div>
     </div>
   );

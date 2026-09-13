@@ -4,8 +4,6 @@ import * as DB from "./db";
 import { type HistoryMsg } from "./db";
 import * as AI from "./ai";
 
-// TODO: make the selected model be saved by adding a new column to the Chat table + type
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -15,7 +13,6 @@ const FRONTEND_ENTRY_FILE = "index.html";
 // set of chat names that are currently active in an agentic loop and cannot be appended to
 const activeChatNames = new Set<string>();
 
-app.use(express.json());
 app.use(express.static(getRelPath(FRONTEND_ROOT_PATH)));
 
 app.get("/", (reqIn: Request, resIn: Response) => {
@@ -24,44 +21,7 @@ app.get("/", (reqIn: Request, resIn: Response) => {
 
 // ####################################################################################
 
-app.post("/api/create-chat", (reqIn: Request, resIn: Response) => {
-  const chatData = reqIn.body;
-
-  console.log(` >> Received Chat data: ${JSON.stringify(chatData)}`);
-
-  if (!chatData.name
-      || typeof chatData.name !== "string"
-      || !chatData.systemPrompt
-      || typeof chatData.systemPrompt !== "string") {
-    return resIn.status(400).json({
-      message: "Provided Chat data is malformed",
-    });
-  }
-
-  if (DB.getChat(chatData.name) !== null) {
-    return resIn.status(400).json({
-      message: `Provided Chat data already exists ${chatData.name}`,
-    });
-  }
-
-  const addRes = DB.addNewChat({
-    name: chatData.name,
-    systemPrompt: chatData.systemPrompt,
-    messages: [],
-    currentDirectory: null,
-    selectedModel: "openrouter/free",
-  });
-
-  if (addRes instanceof Error) {
-    return resIn.status(500).json({
-      message: `Error occurred while creating a new Chat: ${addRes}`,
-    });
-  }
-
-  resIn.sendStatus(201);
-});
-
-app.post("/api/append-chat", async (reqIn: Request, resIn: Response) => {
+app.post("/api/append-chat", express.json({ limit: "10mb" }), async (reqIn: Request, resIn: Response) => {
   const dataIn = reqIn.body;
 
   console.log(` >> Received user message data: ${JSON.stringify(dataIn)}`);
@@ -78,15 +38,27 @@ app.post("/api/append-chat", async (reqIn: Request, resIn: Response) => {
     });
   }
 
-  if (!dataIn.modelSlug || typeof dataIn.modelSlug !== "string") {
+  if (!dataIn.textModelSlug || typeof dataIn.textModelSlug !== "string") {
     return resIn.status(400).json({
-      message: "Missing or malformed `modelSlug` property",
+      message: "Missing or malformed `textModelSlug` property",
+    });
+  }
+
+  if (!dataIn.imageModelSlug || typeof dataIn.imageModelSlug !== "string") {
+    return resIn.status(400).json({
+      message: "Missing or malformed `imageModelSlug` property",
     });
   }
 
   if (!dataIn.apiKey || typeof dataIn.apiKey !== "string") {
     return resIn.status(400).json({
       message: "Missing or malformed `apiKey` property",
+    });
+  }
+
+  if (dataIn.images && !Array.isArray(dataIn.images)) {
+    return resIn.status(400).json({
+      message: "Malformed `images` property",
     });
   }
 
@@ -152,7 +124,9 @@ app.post("/api/append-chat", async (reqIn: Request, resIn: Response) => {
 
     const agenticLoopRes = await AI.agenticLoopRespond(
       cancelResponseBoxed as [boolean],
-      dataIn.modelSlug,
+      dataIn.textModelSlug,
+      dataIn.imageModelSlug,
+      dataIn.images,
       dataIn.apiKey,
       currentDirectoryIn,
       currentMessageHistory,
@@ -164,7 +138,7 @@ app.post("/api/append-chat", async (reqIn: Request, resIn: Response) => {
     }
   }
   catch (errorIn: any) {
-    if (!cancelResponseBoxed[0]) {
+    if (!resIn.writableEnded) {
       resIn.write(JSON.stringify({
         content: `Error occurred while appending a message: ${errorIn}`,
         role: "system",
@@ -178,6 +152,47 @@ app.post("/api/append-chat", async (reqIn: Request, resIn: Response) => {
     }
     activeChatNames.delete(dataIn.chatName);
   }
+});
+
+// this affects all routes below this
+app.use(express.json());
+
+app.post("/api/create-chat", (reqIn: Request, resIn: Response) => {
+  const chatData = reqIn.body;
+
+  console.log(` >> Received Chat data: ${JSON.stringify(chatData)}`);
+
+  if (!chatData.name
+      || typeof chatData.name !== "string"
+      || !chatData.systemPrompt
+      || typeof chatData.systemPrompt !== "string") {
+    return resIn.status(400).json({
+      message: "Provided Chat data is malformed",
+    });
+  }
+
+  if (DB.getChat(chatData.name) !== null) {
+    return resIn.status(400).json({
+      message: `Provided Chat data already exists ${chatData.name}`,
+    });
+  }
+
+  const addRes = DB.addNewChat({
+    name: chatData.name,
+    systemPrompt: chatData.systemPrompt,
+    messages: [],
+    currentDirectory: null,
+    selectedTextModel: "openrouter/free",
+    selectedImageModel: "openrouter/free",
+  });
+
+  if (addRes instanceof Error) {
+    return resIn.status(500).json({
+      message: `Error occurred while creating a new Chat: ${addRes}`,
+    });
+  }
+
+  resIn.sendStatus(201);
 });
 
 app.post("/api/set-chat-current-directory/:nameIn", (reqIn: Request, resIn: Response) => {
@@ -210,7 +225,7 @@ app.post("/api/set-chat-current-directory/:nameIn", (reqIn: Request, resIn: Resp
   resIn.status(201).json(currentDirectoryIn);
 });
 
-app.post("/api/set-chat-selected-model/:nameIn", (reqIn: Request, resIn: Response) => {
+app.post("/api/set-chat-selected-text-model/:nameIn", (reqIn: Request, resIn: Response) => {
   const dataIn = reqIn.body;
 
   if (!dataIn.selectedModelIn || typeof dataIn.selectedModelIn !== "string") {
@@ -230,7 +245,37 @@ app.post("/api/set-chat-selected-model/:nameIn", (reqIn: Request, resIn: Respons
     });
   }
 
-  const setSelectedModelRes = DB.setChatSelectedModel(nameIn, selectedModelIn);
+  const setSelectedModelRes = DB.setChatSelectedTextModel(nameIn, selectedModelIn);
+  if (setSelectedModelRes instanceof Error) {
+    return resIn.status(500).json({
+      message: `Error occurred while setting selected model: ${setSelectedModelRes}`,
+    });
+  }
+
+  resIn.status(201).json(selectedModelIn);
+});
+
+app.post("/api/set-chat-selected-image-model/:nameIn", (reqIn: Request, resIn: Response) => {
+  const dataIn = reqIn.body;
+
+  if (!dataIn.selectedModelIn || typeof dataIn.selectedModelIn !== "string") {
+    return resIn.status(400).json({
+      message: "Missing or malformed `selectedModelIn` property",
+    });
+  }
+
+  const nameIn = reqIn.params.nameIn as string;
+  const selectedModelIn = dataIn.selectedModelIn;
+
+  console.log(` >> Received selected model: ${selectedModelIn} for ${nameIn}`);
+
+  if (!DB.doesChatExist(nameIn)) {
+    return resIn.status(400).json({
+      message: `Provided Chat doesn't exist: ${nameIn}`,
+    });
+  }
+
+  const setSelectedModelRes = DB.setChatSelectedImageModel(nameIn, selectedModelIn);
   if (setSelectedModelRes instanceof Error) {
     return resIn.status(500).json({
       message: `Error occurred while setting selected model: ${setSelectedModelRes}`,

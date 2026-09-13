@@ -142,8 +142,11 @@ async function sendMessageToRobot(
   modelSlugIn: string,
   apiKeyIn: string,
   messagesIn: HistoryMsg[],
+  imagesBase64In?: string[],
 ): Promise<HistoryMsg | Error> {
   try {
+    console.log(` >> Processing response with ${imagesBase64In ? "images" : "text"} robot...`);
+
     const httpRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -152,7 +155,22 @@ async function sendMessageToRobot(
       },
       body: JSON.stringify({
         model: modelSlugIn,
-        messages: messagesIn,
+        messages: imagesBase64In ? [...messagesIn, {
+                                     content: [
+                                       {
+                                         type: "text",
+                                         text: "Use these images in the context of the last text-only user prompt",
+                                       },
+                                       ...imagesBase64In.map((curBase64: string) => ({
+                                         type: "image_url",
+                                         image_url: {
+                                           url: curBase64,
+                                         },
+                                       }))
+                                     ],
+                                     role: "user",
+                                   }]
+                                 : messagesIn,
         tools: TOOL_DEFINITIONS,
         tool_choice: "auto",
         stream: false,
@@ -187,19 +205,24 @@ async function sendMessageToRobot(
 
 export async function agenticLoopRespond(
   cancelResponseBoxed: [boolean], // this can be updated asynchronously to this function
-  modelSlugIn: string,
+  textModelSlugIn: string,
+  imageModelSlugIn: string,
+  imagesBase64In: string[],
   apiKeyIn: string,
   currentDirectoryIn: string,
   messagesIn: HistoryMsg[], // includes sent user prompt message, can be mutated as a side effect as robot messages are received by `appendMsgFnIn`
   appendMsgFnIn: (msgIn: HistoryMsg) => void, // should update anything that needs to be updated when a robot message is received
 ): Promise<Error | true> {
+  let shouldProcessImagesFlag = imagesBase64In.length > 0;
+
   while (true) {
     console.log(" >> Agentic loop running...");
 
     // yield to nodejs event-loop to clear it out first
     await new Promise(resolve => setImmediate(resolve));
 
-    const robotMsgRes = await sendMessageToRobot(modelSlugIn, apiKeyIn, messagesIn);
+    const robotMsgRes = shouldProcessImagesFlag ? await sendMessageToRobot(imageModelSlugIn, apiKeyIn, messagesIn, imagesBase64In)
+                                                : await sendMessageToRobot(textModelSlugIn, apiKeyIn, messagesIn, undefined);
     if (robotMsgRes instanceof Error) {
       return robotMsgRes;
     }
@@ -207,6 +230,10 @@ export async function agenticLoopRespond(
     // stop loop if we need to abort the response early
     if (cancelResponseBoxed[0]) {
       return true;
+    }
+
+    if (shouldProcessImagesFlag) {
+      shouldProcessImagesFlag = false;
     }
 
     appendMsgFnIn(robotMsgRes);
