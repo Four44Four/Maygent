@@ -72,6 +72,7 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
   const textModelSelectRef = useRef<HTMLSelectElement | null>(null);
   const imageModelSelectRef = useRef<HTMLSelectElement | null>(null);
   const imagePickerRefs = useRef<HTMLInputElement[]>([]);
+  const confirmDeleteChatDialogRef = useRef<HTMLDialogElement | null>(null);
 
   useEffect(() => {
     // initialize `msgList`
@@ -253,6 +254,18 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
     setImagePickersCount(oldVal => oldVal + 1);
   };
 
+  const deleteChat = async () => {
+    const deleteChatRes = await fetch(`/api/delete-chat/${chatNameIn}`, {
+      method: "DELETE"
+    });
+    if (!deleteChatRes.ok) {
+      alert(`Error occurred while deleting chat ${chatNameIn}: ${deleteChatRes.status} :: ${deleteChatRes.statusText} :: ${JSON.stringify(await deleteChatRes.json())}`);
+      return;
+    }
+
+    window.location.reload();
+  };
+
   return (
     <div>
       {(msgList === null || systemPrompt === null) && (
@@ -260,6 +273,21 @@ export default function ({ chatNameIn, apiKey }: AppProps) {
       )}
 
       <div style={{ display: (msgList === null || systemPrompt === null) ? "none" : "block" }}>
+        <h2>{chatNameIn}</h2>
+
+        <button style={{ color: "red" }} onClick={() => confirmDeleteChatDialogRef.current?.showModal()}>
+          DELETE CHAT
+        </button>
+        <dialog ref={confirmDeleteChatDialogRef}>
+          <h3>Are you sure you want to delete this chat ??</h3>
+          <button style={{ color: "red" }} onClick={deleteChat}>
+            Yes
+          </button>
+          <button onClick={() => confirmDeleteChatDialogRef.current?.close()}>
+            No
+          </button>
+        </dialog>
+
         <h3>Current directory:</h3>
         <p>{currentDirectoryStr}</p>
         <input type="text" placeholder="Enter your new current directory..." ref={currentDirectoryInputRef}/>

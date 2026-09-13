@@ -44,16 +44,18 @@ type Chat = {
 
 const sqlDB = SQLite(getRelPath("..", "db", "data.db"));
 
-const READ_CHAT_NAMES_STMT    = sqlDB.prepare("SELECT name FROM chats");
-const DOES_CHAT_EXIST_STMT    = sqlDB.prepare("SELECT EXISTS(SELECT 1 FROM chats WHERE name = ? LIMIT 1) AS doesExistOrNot");
-const ADD_NEW_CHAT_STMT       = sqlDB.prepare("INSERT INTO chats (name, systemPrompt, currentDirectory, selectedTextModel, selectedTextModel) VALUES (?, ?, ?, ?, ?)");
-const GET_CHAT_MSG_COUNT_STMT = sqlDB.prepare("SELECT COUNT(*) AS msgsCount FROM messages WHERE chatId = (SELECT id FROM chats WHERE name = ?)");
-const APPEND_MSG_STMT         = sqlDB.prepare("INSERT INTO messages (chatId, position, content, role, toolCallId, toolCallName, toolCalls) VALUES ((SELECT id FROM chats WHERE name = ?), ?, ?, ?, ?, ?, ?)");
-const SET_CHAT_CUR_DIR        = sqlDB.prepare("UPDATE chats SET currentDirectory = ? WHERE name = ?");
-const SET_CHAR_SELECTED_TEXT_MODEL = sqlDB.prepare("UPDATE chats SET selectedTextModel = ? WHERE name = ?");
+const READ_CHAT_NAMES_STMT          = sqlDB.prepare("SELECT name FROM chats");
+const DOES_CHAT_EXIST_STMT          = sqlDB.prepare("SELECT EXISTS(SELECT 1 FROM chats WHERE name = ? LIMIT 1) AS doesExistOrNot");
+const ADD_NEW_CHAT_STMT             = sqlDB.prepare("INSERT INTO chats (name, systemPrompt, currentDirectory, selectedTextModel, selectedTextModel) VALUES (?, ?, ?, ?, ?)");
+const GET_CHAT_MSG_COUNT_STMT       = sqlDB.prepare("SELECT COUNT(*) AS msgsCount FROM messages WHERE chatId = (SELECT id FROM chats WHERE name = ?)");
+const APPEND_MSG_STMT               = sqlDB.prepare("INSERT INTO messages (chatId, position, content, role, toolCallId, toolCallName, toolCalls) VALUES ((SELECT id FROM chats WHERE name = ?), ?, ?, ?, ?, ?, ?)");
+const SET_CHAT_CUR_DIR              = sqlDB.prepare("UPDATE chats SET currentDirectory = ? WHERE name = ?");
+const SET_CHAR_SELECTED_TEXT_MODEL  = sqlDB.prepare("UPDATE chats SET selectedTextModel = ? WHERE name = ?");
 const SET_CHAR_SELECTED_IMAGE_MODEL = sqlDB.prepare("UPDATE chats SET selectedImageModel = ? WHERE name = ?");
-const GET_CHAT                = sqlDB.prepare("SELECT name, systemPrompt, currentDirectory, selectedTextModel, selectedImageModel FROM chats WHERE name = ?");
-const GET_CHAT_MSGS           = sqlDB.prepare("SELECT content, role, toolCallId, toolCallName, toolCalls FROM messages WHERE chatId = (SELECT id FROM chats WHERE name = ?) ORDER BY position ASC");
+const GET_CHAT                      = sqlDB.prepare("SELECT name, systemPrompt, currentDirectory, selectedTextModel, selectedImageModel FROM chats WHERE name = ?");
+const GET_CHAT_MSGS                 = sqlDB.prepare("SELECT content, role, toolCallId, toolCallName, toolCalls FROM messages WHERE chatId = (SELECT id FROM chats WHERE name = ?) ORDER BY position ASC");
+const DELETE_CHAT_STMT              = sqlDB.prepare("DELETE FROM chats WHERE name = ?");
+const DELETE_CHAT_MSGS_STMT         = sqlDB.prepare("DELETE FROM messages WHERE chatId = (SELECT id FROM chats WHERE name = ?)");
 
 export function getChatNames(): string[] {
   try {
@@ -170,5 +172,18 @@ export function getMessages(chatNameIn: string): HistoryMsg[] | null {
              }));
   } catch (errorIn: any) {
     return null;
+  }
+}
+
+// returns if a Chat with name `chatNameIn` was actually found and deleted
+//         or an Error if an error occurs
+export function deleteChat(chatNameIn: string): Error | boolean {
+  try {
+    const deleteChatMsgsRes = DELETE_CHAT_MSGS_STMT.run(chatNameIn);
+    const deleteChatRes = DELETE_CHAT_STMT.run(chatNameIn);
+
+    return deleteChatRes.changes > 0 || deleteChatMsgsRes.changes > 0;
+  } catch (errorIn: any) {
+    return errorIn;
   }
 }

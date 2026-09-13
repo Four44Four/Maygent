@@ -285,6 +285,21 @@ app.post("/api/set-chat-selected-image-model/:nameIn", (reqIn: Request, resIn: R
   resIn.status(201).json(selectedModelIn);
 });
 
+app.delete("/api/delete-chat/:nameIn", (reqIn: Request, resIn: Response) => {
+  const nameIn = reqIn.params.nameIn as string;
+  const deleteChatRes = DB.deleteChat(nameIn);
+  if (deleteChatRes instanceof Error) {
+    return resIn.status(500).json({
+      message: `Error occurred while deleting chat: ${nameIn}`,
+      error: JSON.stringify(deleteChatRes),
+    });
+  }
+
+  resIn.status(200).json({
+    foundAndDeleted: deleteChatRes,
+  })
+});
+
 app.get("/api/get-chat-names", (reqIn: Request, resIn: Response) => {
   resIn.json(DB.getChatNames());
 });
